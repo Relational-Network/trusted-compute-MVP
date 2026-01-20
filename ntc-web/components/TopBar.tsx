@@ -72,7 +72,7 @@ export default function TopBar({ isNavOpen, toggleNav }: TopBarProps) {
             }`}
           >
             <span className="text-xl font-bold text-gray-800 whitespace-nowrap">
-              NAUTILUS
+              RELATIONAL
             </span>
           </div>
         </div>

@@ -53,7 +53,7 @@ const PageLayout = ({ children }: { children: React.ReactNode }) => {
       <footer className="py-6 bg-gray-50">
         <div className="text-center text-sm text-gray-600">
           <div className="mb-2">
-            Copyright © {currentYear}. <span className="font-semibold">Nautilus</span> All rights reserved.
+            Copyright © {currentYear}. <span className="font-semibold">Relational</span> All rights reserved.
           </div>
           <div>
             <a href="/privacy-policy" className="font-semibold hover:text-gray-900 transition-colors"> {/* Use actual links */}

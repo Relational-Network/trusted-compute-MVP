@@ -48,7 +48,7 @@ export default function SignInPage() {
                   />
                 </div>
               </div>
-              <h2 className="text-2xl font-bold text-gray-900">Nautilus MVP Sign In</h2>
+              <h2 className="text-2xl font-bold text-gray-900">Relational Sign In</h2>
             </div>
             <SignIn
               fallbackRedirectUrl={redirectUrl}
@@ -70,7 +70,7 @@ export default function SignInPage() {
       <footer className="py-6 bg-gray-50">
         <div className="text-center text-sm text-gray-600">
           <div className="mb-2">
-            Copyright © {currentYear}. <span className="font-semibold">Nautilus</span> All rights reserved.
+            Copyright © {currentYear}. <span className="font-semibold">Relational</span> All rights reserved.
           </div>
           <div>
             <a href="#" className="font-semibold hover:text-gray-900 transition-colors">
