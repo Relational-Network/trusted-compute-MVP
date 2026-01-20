@@ -1,132 +1,160 @@
-# Nautilus Trusted Compute
-# Copyright (C) 2025 Nautilus
-
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU Affero General Public License for more details.
-
-# You should have received a copy of the GNU Affero General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 ARG UBUNTU_IMAGE=ubuntu:20.04
-FROM ${UBUNTU_IMAGE}
-
-# ARGs cannot be grouped since each FROM in a Dockerfile initiates a new build
-# stage, resulting in the loss of ARG values from earlier stages.
 ARG UBUNTU_CODENAME=focal
 
-# Base Gramine setup
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg2 binutils
+################################
+# STAGE 1 — BUILDER
+################################
+FROM ${UBUNTU_IMAGE} AS builder
+ARG UBUNTU_CODENAME
 
-RUN curl -fsSLo /usr/share/keyrings/gramine-keyring.gpg https://packages.gramineproject.io/gramine-keyring.gpg && \
-    echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/gramine-keyring.gpg] https://packages.gramineproject.io/ '${UBUNTU_CODENAME}' main' > /etc/apt/sources.list.d/gramine.list
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CC=clang
+ENV CXX=clang++
 
-RUN curl -fsSLo /usr/share/keyrings/intel-sgx-deb.key https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key && \
-    echo 'deb [arch=amd64 signed-by=/usr/share/keyrings/intel-sgx-deb.key] https://download.01.org/intel-sgx/sgx_repo/ubuntu '${UBUNTU_CODENAME}' main' > /etc/apt/sources.list.d/intel-sgx.list
+# Build-time dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    binutils \
+    git \
+    make \
+    cmake \
+    clang \
+    llvm \
+    pkg-config \
+    ca-certificates \
+    python3.8-dev \
+    python3-numpy \
+    python3-scipy \
+    libffi-dev \
+    libssl-dev \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Gramine and dependencies
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y gramine \
+# Gramine repo
+RUN curl -fsSLo /usr/share/keyrings/gramine-keyring.gpg \
+      https://packages.gramineproject.io/gramine-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/gramine-keyring.gpg] \
+      https://packages.gramineproject.io/ ${UBUNTU_CODENAME} main" \
+      > /etc/apt/sources.list.d/gramine.list
+
+# Intel SGX repo
+RUN curl -fsSLo /usr/share/keyrings/intel-sgx-deb.key \
+      https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-sgx-deb.key] \
+      https://download.01.org/intel-sgx/sgx_repo/ubuntu ${UBUNTU_CODENAME} main" \
+      > /etc/apt/sources.list.d/intel-sgx.list
+
+# Microsoft repo (Azure DCAP)
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor \
+      > /usr/share/keyrings/microsoft-prod.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] \
+      https://packages.microsoft.com/ubuntu/20.04/prod focal main" \
+      > /etc/apt/sources.list.d/microsoft-prod.list
+
+# Gramine (build-time, pinned)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gramine=1.8* \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust toolchain (builder only)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Clone only sgx-mvp
+WORKDIR /build
+RUN git clone --depth 1 --filter=blob:none \
+    https://github.com/ntls-io/trusted-compute-MVP.git && \
+    cd trusted-compute-MVP && \
+    git sparse-checkout init --cone && \
+    git sparse-checkout set sgx-mvp
+
+# Required lib path workaround
+RUN mkdir -p /lib/x86_64-pc-linux-gnu && \
+    ln -s /lib/x86_64-linux-gnu/* /lib/x86_64-pc-linux-gnu/
+
+# Build enclave (key mounted temporarily)
+RUN --mount=type=secret,id=enclave_key,target=/build/trusted-compute-MVP/sgx-mvp/keys/enclave-key.pem \
+    cd /build/trusted-compute-MVP/sgx-mvp && \
+    make SGX=1 RA_TYPE=dcap
+
+################################
+# STAGE 2 — RUNTIME
+################################
+FROM ${UBUNTU_IMAGE} AS runtime
+ARG UBUNTU_CODENAME
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Minimal bootstrap tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gnupg2 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Gramine repo
+RUN curl -fsSLo /usr/share/keyrings/gramine-keyring.gpg \
+      https://packages.gramineproject.io/gramine-keyring.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/gramine-keyring.gpg] \
+      https://packages.gramineproject.io/ ${UBUNTU_CODENAME} main" \
+      > /etc/apt/sources.list.d/gramine.list
+
+# Intel SGX repo
+RUN curl -fsSLo /usr/share/keyrings/intel-sgx-deb.key \
+      https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-sgx-deb.key] \
+      https://download.01.org/intel-sgx/sgx_repo/ubuntu ${UBUNTU_CODENAME} main" \
+      > /etc/apt/sources.list.d/intel-sgx.list
+
+# Microsoft repo (Azure DCAP)
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor \
+      > /usr/share/keyrings/microsoft-prod.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] \
+      https://packages.microsoft.com/ubuntu/20.04/prod focal main" \
+      > /etc/apt/sources.list.d/microsoft-prod.list
+
+# Runtime dependencies (FULL Python + NumPy + SciPy)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gramine=1.8* \
     sgx-aesm-service \
     libsgx-aesm-launch-plugin \
     libsgx-aesm-epid-plugin \
     libsgx-aesm-quote-ex-plugin \
     libsgx-aesm-ecdsa-plugin \
     libsgx-dcap-quote-verify \
-    psmisc \
-    git \
-    make \
-    cmake \
-    python3.8-dev \
+    az-dcap-client \
+    python3.8 \
     python3-numpy \
     python3-scipy \
-    libffi-dev \
-    libssl-dev \
+    libpython3.8 \
+    psmisc \
+    socat \
     ca-certificates \
-    pkg-config \
-    wget \
-    software-properties-common \
-    clang \
-    llvm && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# Set Clang as the default compiler
-ENV CC=clang
-ENV CXX=clang++
-
-# Install Azure DCAP client
-RUN wget -qO- https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
-    DEBIAN_FRONTEND=noninteractive add-apt-repository "deb [arch=amd64] https://packages.microsoft.com/ubuntu/20.04/prod focal main" && \
-    apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y az-dcap-client && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Install Rust
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Clone only the sgx-mvp directory
-WORKDIR /app
-RUN git config --global core.sparseCheckout true && \
-    git clone --depth 1 --filter=blob:none https://github.com/ntls-io/trusted-compute-MVP.git && \
-    cd trusted-compute-MVP && \
-    git sparse-checkout init --cone && \
-    git sparse-checkout set sgx-mvp
-
-# Create necessary library directory
+# Required lib path workaround (runtime)
 RUN mkdir -p /lib/x86_64-pc-linux-gnu && \
     ln -s /lib/x86_64-linux-gnu/* /lib/x86_64-pc-linux-gnu/
 
+# Runtime dirs
 RUN mkdir -p /var/run/aesmd/
 
-# Build the MVP with temporarily mounted key
-RUN --mount=type=secret,id=enclave_key,target=/app/trusted-compute-MVP/sgx-mvp/keys/enclave-key.pem \
-    cd /app/trusted-compute-MVP/sgx-mvp && \
-    make SGX=1 RA_TYPE=dcap
-
-# Verify signing key cleanup
-RUN echo "Verifying key cleanup..." && \
-    if [ -f /app/trusted-compute-MVP/sgx-mvp/keys/enclave-key.pem ]; then \
-        echo "ERROR: Signing key still present!" && \
-        ls -l /app/trusted-compute-MVP/sgx-mvp/keys/enclave-key.pem && \
-        exit 1; \
-    else \
-        echo "SUCCESS: Verified that signing key was properly removed." && \
-        ls -la /app/trusted-compute-MVP/sgx-mvp/keys/ || echo "keys directory does not exist (expected)"; \
-    fi
+# Copy built artifacts
+COPY --from=builder /build/trusted-compute-MVP/sgx-mvp /app/sgx-mvp
 
 COPY restart_aesm.sh /restart_aesm.sh
+RUN chmod +x /restart_aesm.sh
 
-# Expose the server port
+RUN echo '#!/bin/sh\n\
+/restart_aesm.sh\n\
+socat TCP-LISTEN:8081,fork TCP:127.0.0.1:8080 &\n\
+cd /app/sgx-mvp && exec gramine-sgx sgx-mvp\n' \
+> /start.sh && chmod +x /start.sh
+
+WORKDIR /app/sgx-mvp
 EXPOSE 8080
 ENV HOST=127.0.0.1
 ENV PORT=8080
 
-# Add socat for port forwarding
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y socat && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Create a startup script to handle port forwarding
-RUN echo '#!/bin/bash\n\
-/restart_aesm.sh\n\
-socat TCP-LISTEN:8081,fork TCP:127.0.0.1:8080 & \n\
-cd /app/trusted-compute-MVP/sgx-mvp && \
-gramine-sgx sgx-mvp\n'\
-> /start.sh && chmod +x /start.sh
-
-# Set the working directory where the manifest file is located
-WORKDIR /app/trusted-compute-MVP/sgx-mvp
-
-ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["/start.sh"]
+ENTRYPOINT ["/start.sh"]
