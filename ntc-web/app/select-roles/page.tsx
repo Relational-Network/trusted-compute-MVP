@@ -22,7 +22,7 @@
 import { useState, useEffect, FormEvent } from 'react';
 import { useUser, SignedIn, SignedOut, SignInButton } from '@clerk/nextjs';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useSWRConfig } from 'swr';
+import { useUserProfile } from '@/hooks/useUserProfile';
 
 // Matches Prisma's RoleName enum values. Used for selection state.
 enum ClientRoleName {
@@ -39,13 +39,6 @@ interface FetchedRole {
 }
 
 // Interface for the expected user profile data from /api/user/me
-interface UserProfileWithRoles {
-    id: string;
-    clerkId: string;
-    walletAddress?: string | null;
-    roles: ClientRoleName[];
-}
-
 // Helper to get a user-friendly label from RoleName
 function getRoleLabel(roleName: ClientRoleName): string {
     switch (roleName) {
@@ -62,7 +55,7 @@ export default function SelectRolesPage() {
     const { user, isSignedIn, isLoaded: isAuthLoaded } = useUser();
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { mutate } = useSWRConfig();
+    const { roles: profileRoles, isLoadingProfile, mutateUserProfile } = useUserProfile();
 
     const [allAvailableRoles, setAllAvailableRoles] = useState<FetchedRole[]>([]);
     const [selectedClientRoles, setSelectedClientRoles] = useState<ClientRoleName[]>([]);
@@ -70,6 +63,7 @@ export default function SelectRolesPage() {
     const [isFetchingPageData, setIsFetchingPageData] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [hasInitializedSelection, setHasInitializedSelection] = useState(false);
 
     useEffect(() => {
         async function loadPageData() {
@@ -81,21 +75,6 @@ export default function SelectRolesPage() {
                 const fetchedRolesData: FetchedRole[] = await rolesResponse.json();
                 setAllAvailableRoles(fetchedRolesData);
 
-                if (isSignedIn && user) {
-                    const userProfileResponse = await fetch('/api/user/me');
-                    if (!userProfileResponse.ok) {
-                        if (userProfileResponse.status === 404) {
-                            console.warn("User profile (for roles) not found via /api/user/me for role pre-selection.");
-                        } else {
-                            console.error(`Failed to fetch current roles (status: ${userProfileResponse.status})`);
-                        }
-                    } else {
-                        const userData: UserProfileWithRoles = await userProfileResponse.json();
-                        if (userData.roles && Array.isArray(userData.roles)) {
-                            setSelectedClientRoles(userData.roles);
-                        }
-                    }
-                }
             } catch (fetchError: any) {
                 console.error("Error loading page data for /select-roles:", fetchError);
                 setError(fetchError.message || "Could not load page data.");
@@ -106,10 +85,20 @@ export default function SelectRolesPage() {
         if (isAuthLoaded) {
             loadPageData();
         }
-    }, [isAuthLoaded, isSignedIn, user]);
+    }, [isAuthLoaded]);
+
+    useEffect(() => {
+        if (!isAuthLoaded || !isSignedIn || isLoadingProfile || hasInitializedSelection) {
+            return;
+        }
+
+        setSelectedClientRoles(profileRoles);
+        setHasInitializedSelection(true);
+    }, [isAuthLoaded, isSignedIn, isLoadingProfile, profileRoles, hasInitializedSelection]);
 
     const handleRoleChange = (roleName: ClientRoleName) => {
         setSelectedClientRoles(prev => prev.includes(roleName) ? prev.filter(r => r !== roleName) : [...prev, roleName]);
+        setHasInitializedSelection(true);
         setError(null); // Clear error when user makes a change
         setSuccessMessage(null);
     };
@@ -140,7 +129,7 @@ export default function SelectRolesPage() {
             const data = await response.json();
             if (!response.ok) throw new Error(data.message || 'An unknown error occurred.');
             setSuccessMessage(data.message || 'Roles updated successfully! Redirecting...');
-            await mutate('/api/user/me');
+            await mutateUserProfile();
 
             const nextUrl = searchParams.get('next') || '/';
             setTimeout(() => router.push(nextUrl), 2000);
@@ -151,7 +140,7 @@ export default function SelectRolesPage() {
         }
     };
 
-    if (!isAuthLoaded || isFetchingPageData) {
+    if (!isAuthLoaded || isFetchingPageData || (isSignedIn && isLoadingProfile)) {
         return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', background: '#f7fafc' }}>Loading information...</div>;
     }
 
@@ -166,7 +155,7 @@ export default function SelectRolesPage() {
                         {user?.firstName ? `Manage Roles for ${user.firstName}` : 'Manage Your Roles'}
                     </h1>
                     <p style={{ textAlign: 'center', marginBottom: '25px', color: '#4a5568', fontSize: '15px' }}>
-                        Select or update your roles to best describe how you'll interact with Nautilus. You must select at least one.
+                        Select or update your roles to best describe how you'll interact with Relational. You must select at least one.
                     </p>
                     <form onSubmit={handleSubmit}>
                         {allAvailableRoles.length === 0 && !isFetchingPageData && <p className="text-center text-gray-500">No roles are currently available to select.</p>}

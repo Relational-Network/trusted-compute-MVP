@@ -24,8 +24,8 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
-  getAssociatedTokenAddressSync
-} from "@solana/spl-token";
+  getAssociatedTokenAddressSync,
+} from "@/lib/solanaToken";
 import { 
   PublicKey, 
   SystemProgram, 

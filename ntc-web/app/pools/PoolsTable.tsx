@@ -23,7 +23,7 @@ import { useDrtProgram } from "@/lib/useDrtProgram";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { redeemDrt } from "@/lib/drtHelpers";
 import { PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddress } from "@solana/spl-token";
+import { getAssociatedTokenAddress } from "@/lib/solanaToken";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";

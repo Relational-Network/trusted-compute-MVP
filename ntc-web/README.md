@@ -133,5 +133,5 @@ If you encounter issues with the TypeScript configuration when seeding:
 1. Verify `tsconfig.seed.json` exists in the project root
 2. Ensure all dependencies are installed:
     ```bash
-    npm install -D ts-node typescript @types/node
+    npm install -D tsx typescript @types/node
     ```

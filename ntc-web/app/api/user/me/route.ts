@@ -20,7 +20,7 @@
 import { NextResponse } from 'next/server';
 import { currentUser } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/prisma'; 
-import { RoleName } from '@prisma/client'; // Import RoleName for type safety
+import { Prisma, RoleName } from '@prisma/client'; // Import RoleName for type safety
 
 export async function GET(req: Request) {
   try {
@@ -33,30 +33,52 @@ export async function GET(req: Request) {
     // In your schema, User.id IS the clerkUser.id
     const userId = clerkUser.id;
 
-    const userProfile = await prisma.user.findUnique({
-      where: {
-        id: userId,
-      },
-      include: {
-        userRoles: { // Include the join table records
-          select: {
-            role: { // For each join table record, select the related Role
-              select: {
-                name: true, // And from that Role, select its name
-              },
+    const includeUserRoles = {
+      userRoles: {
+        select: {
+          role: {
+            select: {
+              name: true,
             },
           },
         },
-        // You can include other fields from the User model if needed by the client
-        // e.g., walletAddress: true,
       },
+    };
+
+    let userProfile = await prisma.user.findUnique({
+      where: {
+        clerkId: userId,
+      },
+      include: includeUserRoles,
     });
 
     if (!userProfile) {
-      // This might happen if the user exists in Clerk but their record hasn't been created
-      // in your local DB yet (e.g., if /api/auth/check-user hasn't run for them).
-      console.warn(`User profile not found in DB for Clerk ID: ${userId}. Prompting for profile setup might be needed.`);
-      return NextResponse.json({ message: 'User profile not found in application database. Please complete your profile setup.' }, { status: 404 });
+      try {
+        userProfile = await prisma.user.create({
+          data: {
+            id: userId,
+            clerkId: userId,
+            walletAddress: null,
+          },
+          include: includeUserRoles,
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          userProfile = await prisma.user.findUnique({
+            where: { clerkId: userId },
+            include: includeUserRoles,
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (!userProfile) {
+      return NextResponse.json(
+        { message: "User profile could not be loaded." },
+        { status: 500 }
+      );
     }
 
     // Transform the userRoles data into a simple array of role names

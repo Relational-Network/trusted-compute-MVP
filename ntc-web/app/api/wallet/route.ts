@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   try {
@@ -71,11 +72,86 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const normalizedWalletAddress = walletAddress.trim();
+
     console.log(`✅ Linking wallet for user: ${user.id}`);
 
-    const updatedUser = await prisma.user.update({
+    let dbUser = await prisma.user.findUnique({
       where: { clerkId: user.id },
-      data: { walletAddress },
+      select: { id: true, clerkId: true, walletAddress: true },
+    });
+
+    if (!dbUser) {
+      dbUser = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: { id: true, clerkId: true, walletAddress: true },
+      });
+    }
+
+    if (!dbUser) {
+      try {
+        dbUser = await prisma.user.create({
+          data: { id: user.id, clerkId: user.id, walletAddress: null },
+          select: { id: true, clerkId: true, walletAddress: true },
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+          dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { id: true, clerkId: true, walletAddress: true },
+          });
+          if (!dbUser) {
+            dbUser = await prisma.user.findUnique({
+              where: { clerkId: user.id },
+              select: { id: true, clerkId: true, walletAddress: true },
+            });
+          }
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (!dbUser) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    if (dbUser.clerkId !== user.id) {
+      const userByClerkId = await prisma.user.findUnique({
+        where: { clerkId: user.id },
+        select: { id: true, clerkId: true, walletAddress: true },
+      });
+
+      if (userByClerkId) {
+        dbUser = userByClerkId;
+      } else {
+        dbUser = await prisma.user.update({
+          where: { id: dbUser.id },
+          data: { clerkId: user.id },
+          select: { id: true, clerkId: true, walletAddress: true },
+        });
+      }
+    }
+
+    if (dbUser.walletAddress === normalizedWalletAddress) {
+      return NextResponse.json({ walletAddress: dbUser.walletAddress });
+    }
+
+    const walletOwner = await prisma.user.findFirst({
+      where: { walletAddress: normalizedWalletAddress },
+      select: { id: true },
+    });
+
+    if (walletOwner && walletOwner.id !== dbUser.id) {
+      return NextResponse.json(
+        { error: "Wallet address is already linked to another user." },
+        { status: 409 }
+      );
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: dbUser.id },
+      data: { walletAddress: normalizedWalletAddress },
       select: { walletAddress: true }
     });
 
@@ -85,10 +161,13 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error("❌ Error linking wallet:", error);
-    return NextResponse.json(
-      { error: "Failed to link wallet" },
-      { status: 500 }
-    );
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json(
+        { error: "Wallet address is already linked to another user." },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ error: "Failed to link wallet" }, { status: 500 });
   } finally {
     await prisma.$disconnect();
   }

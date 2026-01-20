@@ -19,6 +19,7 @@
 // app/api/auth/check-user/route.ts
 import { NextResponse } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(req: Request) {
@@ -32,23 +33,38 @@ export async function POST(req: Request) {
 
         const userId = user.id;
 
-        // Use prisma.user.upsert to atomically find and create/update the user.
-        // This is safe to call multiple times and prevents race conditions.
-        const userInDb = await prisma.user.upsert({
-            where: {
-                clerkId: userId,
-            },
-            update: {
-                // You can add fields to update on every login here if needed
-                // For example: lastLoginAt: new Date()
-            },
-            create: {
-                id: userId,
-                clerkId: userId,
-                // walletAddress can be set to null or a default value
-                walletAddress: null,
-            },
-        });
+        let userInDb;
+
+        try {
+            userInDb = await prisma.user.upsert({
+                where: {
+                    id: userId,
+                },
+                update: {
+                    clerkId: userId,
+                },
+                create: {
+                    id: userId,
+                    clerkId: userId,
+                    walletAddress: null,
+                },
+            });
+        } catch (error) {
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+                userInDb = await prisma.user.findUnique({
+                    where: { clerkId: userId },
+                });
+            } else {
+                throw error;
+            }
+        }
+
+        if (!userInDb) {
+            return NextResponse.json(
+                { message: "User could not be ensured in database." },
+                { status: 500 }
+            );
+        }
 
         console.log(`✅ User ${userInDb.id} ensured in DB.`);
 

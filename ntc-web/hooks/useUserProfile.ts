@@ -71,7 +71,9 @@ export function useUserProfile() {
     fetcher,
     {
       shouldRetryOnError: false, // Keep this false to handle the 404 state correctly
-      revalidateOnFocus: true,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      dedupingInterval: 60_000,
     }
   );
 
